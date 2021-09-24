@@ -1,0 +1,152 @@
+---
+- name: 'Task 1'
+  hosts: localhost
+  connection: local
+  become: False
+  gather_facts: no
+
+  vars_files: secrets.yaml
+  vars: 
+    gcp_project: "{{ gcp_project }}"
+    gcp_cred_kind: "serviceaccount"
+    gcp_cred_file: "/tmp/cred.json"
+
+  tasks:
+  - name: create disk 1
+    google.cloud.gcp_compute_disk:
+      name: disk-alpha
+      size_gb: 30
+      source_image: projects/ubuntu-os-cloud/global/images/family/ubuntu-2004-lts
+      zone: us-central1-a
+      project: "{{ gcp_project }}"
+      auth_kind: "{{ gcp_cred_kind }}"
+      service_account_file: "{{ gcp_cred_file }}"
+      state: present
+    register: disk_alpha
+
+  - name: create disk 2
+    google.cloud.gcp_compute_disk:
+      name: disk-beta
+      size_gb: 30
+      source_image: projects/ubuntu-os-cloud/global/images/family/ubuntu-2004-lts
+      zone: us-central1-a
+      project: "{{ gcp_project }}"
+      auth_kind: "{{ gcp_cred_kind }}"
+      service_account_file: "{{ gcp_cred_file }}"
+      state: present
+    register: disk_beta
+
+  - name: create address 1
+    google.cloud.gcp_compute_address:
+      name: address-alpha
+      region: us-central1
+      project: "{{ gcp_project }}"
+      auth_kind: "{{ gcp_cred_kind }}"
+      service_account_file: "{{ gcp_cred_file }}"
+      state: present
+    register: address_alpha
+
+  - name: create address 2
+    google.cloud.gcp_compute_address:
+      name: address-beta
+      region: us-central1
+      project: "{{ gcp_project }}"
+      auth_kind: "{{ gcp_cred_kind }}"
+      service_account_file: "{{ gcp_cred_file }}"
+      state: present
+    register: address_beta
+
+  - name: create instance 1
+    google.cloud.gcp_compute_instance:
+      name: vm-alpha
+      machine_type: n1-standard-1
+      disks:
+      - auto_delete: 'true'
+        boot: 'true'
+        source: "{{ disk_alpha }}"
+      labels:
+        environment: production
+      network_interfaces:
+      - network: null
+        access_configs:
+        - name: External NAT
+          nat_ip: "{{ address_alpha }}"
+          type: ONE_TO_ONE_NAT
+      tags:
+        items:
+          - http-server
+          - https-server
+      zone: us-central1-a
+      project: "{{ gcp_project }}"
+      auth_kind: serviceaccount
+      service_account_file: "{{ gcp_cred_file }}"
+      state: present
+
+  - name: create instance 2
+    google.cloud.gcp_compute_instance:
+      name: vm-beta
+      machine_type: n1-standard-1
+      disks:
+      - auto_delete: 'true'
+        boot: 'true'
+        source: "{{ disk_beta }}"
+      labels:
+        environment: production
+      network_interfaces:
+      - network: null
+        access_configs:
+        - name: External NAT
+          nat_ip: "{{ address_beta }}"
+          type: ONE_TO_ONE_NAT
+      tags:
+        items:
+          - http-server
+          - https-server      
+      zone: us-central1-a
+      project: "{{ gcp_project }}"
+      auth_kind: serviceaccount
+      service_account_file: "{{ gcp_cred_file }}"
+      state: present
+
+  - name: Wait for SSH to come up 1
+    wait_for: host={{ address_alpha.address }} port=22 delay=10 timeout=60
+
+  - name: Add host to groupname 1
+    add_host: hostname={{ address_alpha.address }} groupname=new_instances
+
+  - name: Wait for SSH to come up 2
+    wait_for: host={{ address_beta.address }} port=22 delay=10 timeout=60
+
+  - name: Add host to groupname 2
+    add_host: hostname={{ address_beta.address }} groupname=new_instances
+
+- name: Manage new instances
+  hosts: new_instances
+  connection: ssh
+  become: True
+  gather_facts: yes
+  tasks:
+    - name:  Install Apache2
+      apt:
+        name:  apache2
+        state:  latest
+    - name:  Start httpd
+      service:
+        name:  apache2
+        state:  started
+        enabled:  yes
+    - name: Copy index file
+      template:
+        src: index.j2
+        dest: /var/www/html/index.html
+      notify:
+        - restart httpd
+    - name: allow from firewall
+      shell:
+         "ufw allow 80"
+  handlers:
+    - name: restart httpd
+      service:
+        name:  apache2
+        state:  restarted
+
