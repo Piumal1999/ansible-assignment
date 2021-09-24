@@ -1,0 +1,19 @@
+---
+- name:  Install Apache2
+  apt:
+    name:  apache2
+    state:  latest
+- name:  Start httpd
+  service:
+    name:  apache2
+    state:  started
+    enabled:  yes
+- name: Copy index file
+  template:
+    src: index.j2
+    dest: /var/www/html/index.html
+  notify:
+    - restart httpd
+- name: allow from firewall
+  shell:
+    "ufw allow 80"
